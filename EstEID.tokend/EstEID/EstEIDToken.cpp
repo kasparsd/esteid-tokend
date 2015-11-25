@@ -52,23 +52,26 @@ using CssmClient::AclFactory;
 static map<string,EstEIDToken::CardApplicationVersion> create_map()
 {
     map<string,EstEIDToken::CardApplicationVersion> m;
-    
+
     m["3BFE9400FF80B1FA451F034573744549442076657220312E3043"] = EstEIDToken::VER_1_0;
     m["3B6E00FF4573744549442076657220312E30"] = EstEIDToken::VER_1_0;
     m["3BDE18FFC080B1FE451F034573744549442076657220312E302B"] = EstEIDToken::VER_1_0_2007;
     m["3B5E11FF4573744549442076657220312E30"] = EstEIDToken::VER_1_0_2007;
     m["3B6E00004573744549442076657220312E30"] = EstEIDToken::VER_1_1;
-    
+
     m["3BFE1800008031FE454573744549442076657220312E30A8"] = EstEIDToken::VER_3_4;
     m["3BFE1800008031FE45803180664090A4561B168301900086"] = EstEIDToken::VER_3_4;
     m["3BFE1800008031FE45803180664090A4162A0083019000E1"] = EstEIDToken::VER_3_4;
     m["3BFE1800008031FE45803180664090A4162A00830F9000EF"] = EstEIDToken::VER_3_4;
-    
+
     m["3BF9180000C00A31FE4553462D3443432D303181"] = EstEIDToken::VER_3_5;
     m["3BF81300008131FE454A434F5076323431B7"] = EstEIDToken::VER_3_5;
     m["3BFA1800008031FE45FE654944202F20504B4903"] = EstEIDToken::VER_3_5;
     m["3BFE1800008031FE45803180664090A4162A00830F9000EF"] = EstEIDToken::VER_3_5;
-    
+
+    // Latvia ID
+    m["3BDD18008131FE45904C41545649412D65494490008C"] = EstEIDToken::VER_LV;
+
     return m;
 }
 const map<string, EstEIDToken::CardApplicationVersion> EstEIDToken::supportedATRs =  create_map();
@@ -88,26 +91,26 @@ EstEIDToken::~EstEIDToken() {
 }
 
 uint32 EstEIDToken::probe(SecTokendProbeFlags flags, char tokenUid[TOKEND_MAX_UID]) {
-    
+
     _log("                      _          ");
     _log("      _ __  _ __ ___ | |__   ___ ");
     _log("     | '_ \\| '__/ _ \\| '_ \\ / _ \\");
     _log("     | |_) | | | (_) | |_) |  __/");
     _log("     | .__/|_|  \\___/|_.__/ \\___|");
     _log("     |_|                         ");
-    
+
     uint32 score = 0;
-    
+
     try {
-        
+
         const SCARD_READERSTATE &readerState = *(*startupReaderInfo)();
         std::string atr = EstEidUtility::charsToHex((char *)readerState.rgbAtr, readerState.cbAtr);
         _log("current ATR: '%s'", atr.c_str());
-        
+
         auto it = supportedATRs.find(atr);
         if (it != supportedATRs.end()) {
             appVersion = it -> second;
-        
+
             _connectAndBeginTransaction();
             populatePersonalData();
             _endTransaction();
@@ -117,7 +120,7 @@ uint32 EstEIDToken::probe(SecTokendProbeFlags flags, char tokenUid[TOKEND_MAX_UI
         } else {
             _log("This card is not supported!");
         }
-        
+
     } catch (PCSC::Error &e) {
         _log("PCSC returned an error: %s (0x%lX)\n", pcsc_stringify_error(e.error), e.error);
         disconnect();
@@ -148,7 +151,7 @@ void EstEIDToken::establish(const CSSM_GUID *guid, uint32 subserviceId,
     try {
         _connectAndBeginTransaction();
         Tokend::Token::establish(guid, subserviceId, flags, cacheDirectory, workDirectory, mdsDirectory, printName);
-        
+
         CssmData authCert = getCert();
         size_t keySize = getKeySize(authCert);
         _log("Key size = %u", keySize);
@@ -170,7 +173,7 @@ void EstEIDToken::establish(const CSSM_GUID *guid, uint32 subserviceId,
     } catch(...) {
         _log("Unknown failure occured. Possible memory corruption");
     }
-    
+
     _endTransaction();
 }
 
@@ -180,7 +183,7 @@ void EstEIDToken::authenticate(CSSM_DB_ACCESS_TYPE mode, const AccessCredentials
 }
 
 void EstEIDToken::verifyPIN(int pinNum, const unsigned char *pin, size_t pinLength) {
-  
+
     _log("                    _  __       ____ ___ _   _     ");
     _log("    __   _____ _ __(_)/ _|_   _|  _ \\_ _| \\ | |  ");
     _log("    \\ \\ / / _ \\ '__| | |_| | | | |_) | ||  \\| |");
@@ -188,7 +191,7 @@ void EstEIDToken::verifyPIN(int pinNum, const unsigned char *pin, size_t pinLeng
     _log("      \\_/ \\___|_|  |_|_|  \\__, |_|  |___|_| \\_|");
     _log("                          |___/                ");
     _log("pinNum = %u, pin length = %u!", pinNum, pinLength);
-    
+
     if (pinNum != 1) {
         CssmError::throwMe(CSSM_ERRCODE_SAMPLE_VALUE_NOT_SUPPORTED);
     }
@@ -236,25 +239,25 @@ void EstEIDToken::_verifyPin(PinString pin)  {
 }
 
 CssmData EstEIDToken::getCert() {
-    
+
     _log("getCert");
     CssmData data;
-    
+
     if (cachedObject(0, CERT_LABEL, data)) {
         _log("using CACHED cert!");
         return data;
     } else {
-        
+
         _log("read cert from token!");
         try {
             selectMF();
-            selectDF(0xEEEE);
-            selectEF(0xAACE);
-            
+            selectDF(0x2F01);
+            selectEF(0x0100);
+
             uint8 certificate[ESTEID_MAXSIZE_CERT];
             size_t certificateLength = sizeof(certificate);
             readBinary(certificate, certificateLength);
-            
+
             _log("authentication certificate read (%u bytes): %s", certificateLength, EstEidUtility::charsToHex((char *) certificate, certificateLength).c_str());
 
             // remove padding
@@ -266,13 +269,13 @@ CssmData EstEIDToken::getCert() {
             } else {
                 data.Length = certificateLength;
             }
-            
+
             data.Data = reinterpret_cast<uint8 *>(malloc(data.Length + 1));
             memcpy(data.Data, &certificate[0], data.Length);
             _log("store cert in local cache: mDescription: %s", CERT_LABEL.c_str());
             cacheObject(0, CERT_LABEL, data);
             _log("authentication certificate read(%u bytes): %s", data.Length, EstEidUtility::charsToHex((char *) data.Data, data.Length).c_str());
-            
+
         } catch (PCSC::Error &e) {
             _log("PCSC returned an error: %s (0x%lX)\n", pcsc_stringify_error(e.error), e.error);
         } catch(const std::exception& ex) {
@@ -280,30 +283,30 @@ CssmData EstEIDToken::getCert() {
         } catch(...) {
             _log("Unknown failure occured. Possible memory corruption");
         }
-        
+
         return data;
     }
 }
 
 string EstEIDToken::getCommonName(CssmData certData) {
-    
+
     const char *cn = NULL;
     SecCertificateRef certRef = 0;
     CFStringRef commonName = NULL;
     string result = "unknown";
-    
-    
+
+
     OSStatus status = SecCertificateCreateFromData(&certData, CSSM_CERT_X_509v3, CSSM_CERT_ENCODING_BER, &certRef);
     if (!status)
     {
         CFStringRef commonName = NULL;
         SecCertificateCopyCommonName(certRef, &commonName);
         if (commonName) {
-            
+
             CFIndex length = CFStringGetLength(commonName);
             CFIndex maxSize = CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8) + 1;
             char *buffer = (char *)malloc(maxSize);
-                
+
             if (CFStringGetCString(commonName, buffer, maxSize, kCFStringEncodingUTF8)) {
                 cn = buffer;
                 result = string(buffer);
@@ -317,18 +320,18 @@ string EstEIDToken::getCommonName(CssmData certData) {
         CFRelease(certRef);
     if (commonName)
         CFRelease(commonName);
-    
+
     return result;
 }
 
 size_t EstEIDToken::getKeySize(CssmData certData) {
-    
-    
+
+
     size_t keySize = 0;
     SecCertificateRef certRef = 0;
     SecKeyRef keyRef = 0;
     const CSSM_KEY *cssmKey = NULL;
-    
+
     OSStatus status = SecCertificateCreateFromData(&certData, CSSM_CERT_X_509v3, CSSM_CERT_ENCODING_BER, &certRef);
     if(status != noErr) goto done;
         status = SecCertificateCopyPublicKey(certRef, &keyRef);
@@ -357,7 +360,7 @@ void EstEIDToken::unverifyPIN(int pinNum) {
     if (pinNum != 1) {
         CssmError::throwMe(CSSM_ERRCODE_SAMPLE_VALUE_NOT_SUPPORTED);
     }
-    
+
     end(SCARD_RESET_CARD);
 }
 
@@ -388,10 +391,10 @@ void EstEIDToken::getAcl(const char *tag, uint32 &count, AclEntryInfo *&acls) {
 
 void EstEIDToken::populate() {
     FLOG;
-    
+
     Tokend::Relation &certRelation = mSchema->findRelation(CSSM_DL_DB_RECORD_X509_CERTIFICATE);
     Tokend::Relation &privateKeyRelation = mSchema->findRelation(CSSM_DL_DB_RECORD_PRIVATE_KEY);
-    
+
     RefPointer<Tokend::Record> eAuthCert(new EstEIDCertRecord("Authentication Certificate"));
     certRelation.insertRecord(eAuthCert);
 
@@ -404,20 +407,20 @@ void EstEIDToken::populate() {
 
 /*
 	A full transaction for the readBinary command seems to be the following:
-	
+
 	- Select the appropriate file [ref INS_SELECT_FILE]
 	- Issue read binary command (0xB0) for READ_BLOCK_SIZE (0xF4) bytes
 	- usually, it will come back with a response of "6C xx", where xx is the
  actual number of bytes available
 	- Issue a new read binary command with correct size
-	
+
  */
 
 /*
 	See NIST IR 6887, 5.1.1.2 Read Binary APDU
- 
+
 	Function Code 0x02
-	
+
 	CLA			0x00
 	INS			0xB0
 	P1			High-order byte of 2-byte offset
@@ -425,10 +428,10 @@ void EstEIDToken::populate() {
 	Lc			Empty
 	Data Field	Empty
 	Le			Number of bytes to read
- 
- 
+
+
 	Processing State returned in the Response Message
- 
+
 	SW1 SW2		Meaning
 	---	---	-----------------------------------------------------
 	62	81	Part of returned data may be corrupted
@@ -442,7 +445,7 @@ void EstEIDToken::populate() {
 	6B	00	Wrong parameters (offset outside the EF)
 	6C	XX	Wrong length (wrong Le field; XX indicates the exact length)
 	90	00	Successful execution
-	
+
 	Non-fatal errors:
 	62	82	End of file reached before reading Le bytes
 	6B	00	Wrong parameters (offset outside the EF)
@@ -452,11 +455,11 @@ void EstEIDToken::populate() {
 
 void EstEIDToken::readBinary(uint8_t *result, size_t &resultLength) {
     // Attempt to read READ_BLOCK_SIZE bytes
-    
+
     unsigned char rcvBuffer[MAX_BUFFER_SIZE];		// N.B. Must be > READ_BLOCK_SIZE
     size_t bytesReceived = sizeof(rcvBuffer);
     size_t returnedDataLength = 0;
-    
+
     // The initial "Read Binary" command, with offset 0 and length READ_BLOCK_SIZE
     unsigned char apdu[] = { 0x00, 0xB0, 0x00, 0x00, READ_BLOCK_SIZE };
     size_t apduSize = sizeof(apdu);
@@ -465,16 +468,16 @@ void EstEIDToken::readBinary(uint8_t *result, size_t &resultLength) {
     uint32_t offset = 0;
     bool requestedTooMuch = false;
     for (bool done = false; !done; ) {
-        
+
         bytesReceived = sizeof(rcvBuffer);	// must reset each time
         _log("readBinary: attempting read of %d bytes at offset: %d", apdu[OFF_LC], (apdu[OFF_P1] << 8 | apdu[OFF_P2]));
         transmit(apdu, apduSize, rcvBuffer, bytesReceived);
         if (bytesReceived < 2)
         break;
-        
+
         rx = (rcvBuffer[bytesReceived - 2] << 8) + rcvBuffer[bytesReceived - 1];
         _log("readBinary result 0x%02X (masked: 0x%02X)", rx, rx & 0xFF00);
-        
+
         switch (rx & 0xFF00) {
             case SCARD_BYTES_LEFT_IN_SW2:		// 0x6100
             case SCARD_LE_IN_SW2:				// 0x6C00
@@ -508,7 +511,7 @@ void EstEIDToken::readBinary(uint8_t *result, size_t &resultLength) {
                 return;						// will actually throw above
         }
     }
-    
+
     _log("readBinary read a total of %ld bytes", returnedDataLength);
     resultLength = returnedDataLength;
 }
@@ -517,7 +520,7 @@ void EstEIDToken::readBinary(uint8_t *result, size_t &resultLength) {
 
 void EstEIDToken::selectMF() {
     _log("SELECT MF");
-    uint8_t command[] = { 0x00, 0xA4, 0x00, 0x0C };
+    uint8_t command[] = { 0x00, 0xA4, 0x09, 0x04 };
     unsigned char result[MAX_BUFFER_SIZE];
     size_t resultLength = sizeof(result);
     EstEIDError::check(exchangeAPDU(command, sizeof(command), result, resultLength));
@@ -525,7 +528,7 @@ void EstEIDToken::selectMF() {
 
 void EstEIDToken::selectDF(uint16_t fileID) {
     _log("SELECT DF");
-    uint8_t command[] = { 0x00, 0xA4, 0x01, 0x04, 0x02, HIBYTE(fileID), LOBYTE(fileID) };
+    uint8_t command[] = { 0x00, 0xA4, 0x09, 0x04, 0x02, HIBYTE(fileID), LOBYTE(fileID) };
     unsigned char result[MAX_BUFFER_SIZE];
     size_t resultLength = sizeof(result);
     EstEIDError::check(exchangeAPDU(command, sizeof(command), result, resultLength));
@@ -563,7 +566,7 @@ uint32_t EstEIDToken::verify(uint8_t pinNum, const unsigned char *pin, uint8_t p
 
 void EstEIDToken::selectEF(uint16_t fileID) {
     _log("SELECT EF");
-    uint8_t command[] = { 0x00, 0xA4, 0x02, 0x04, 0x02, HIBYTE(fileID), LOBYTE(fileID) };
+    uint8_t command[] = { 0x00, 0xA4, 0x09, 0x04, 0x02, HIBYTE(fileID), LOBYTE(fileID) };
     unsigned char result[MAX_BUFFER_SIZE];
     size_t resultLength = sizeof(result);
     EstEIDError::check(exchangeAPDU(command, sizeof(command), result, resultLength));
@@ -588,11 +591,11 @@ string EstEIDToken::readRecord(uint8_t recNo) {
 
 void EstEIDToken::populatePersonalData() {
     _log("READ PERSONAL DATA FROM CARD");
-    selectMF();
-    selectDF(0xEEEE);
-    selectEF(0x5044);
-    string docNo = readRecord(0x08);
-    personalData["documentNumber"] = docNo;
+    //selectMF();
+    //selectDF(0xEEEE);
+    //selectEF(0x5044);
+    //string docNo = readRecord(0x08);
+    personalData["documentNumber"] = '123';
 }
 
 string EstEIDToken::getTLSResponse(std::vector<uint8_t> hash) {
@@ -613,7 +616,7 @@ uint32_t EstEIDToken::exchangeAPDU(uint8_t *apdu, size_t apduLength, uint8_t *re
     transmit(apdu, apduLength, result, resultLength);
     _log("-----[ apdu response (%u bytes)       ] <----- %s", resultLength, EstEidUtility::charsToHex((char *) result, resultLength).c_str());
     if (resultLength == 2 && result[0] == 0x61) {
-        
+
         resultLength = savedLength;
         uint8 expectedLength = result[1];
         _log("reading expected result of %u bytes", expectedLength);
@@ -621,15 +624,15 @@ uint32_t EstEIDToken::exchangeAPDU(uint8_t *apdu, size_t apduLength, uint8_t *re
         EstEIDToken::usleep(INTER_COMMAND_DELAY);
         transmit(getResult, sizeof(getResult), result, resultLength);
         _log("-----[ apdu response (%u bytes)      ] <----- %s", resultLength, EstEidUtility::charsToHex((char *) result, resultLength).c_str());
-        
+
         if ((resultLength - 2 != expectedLength) && resultLength < 2) {
             PCSC::Error::throwMe(SCARD_E_PROTO_MISMATCH);
         }
     }
-    
+
     if (resultLength < 2)
         PCSC::Error::throwMe(SCARD_E_PROTO_MISMATCH);
-    
+
     return (result[resultLength - 2] << 8) + result[resultLength - 1];
 }
 
@@ -654,20 +657,20 @@ int EstEIDToken::_connectAndBeginTransaction() {
     const SCARD_READERSTATE &readerState = *(*startupReaderInfo)();
 
     int maxRetries = 5;
-    
+
     // if someone or something has reset the card in between, then try to cope with that
     for (int i = 0; i < maxRetries; i++) {
-        
+
         if (i > 0) {
             _log("Waiting 0,5 sec to retry %u", i);
             usleep(500000); // wait for 0,5 sec
         }
-        
+
         // reestablish connection if necessary
         if (!isConnected())  {
             try {
                 _log("Connecting using reader: %s - current state: 0x%lX, event state: 0x%lX", readerState.szReader, readerState.dwCurrentState, readerState.dwEventState);
-                connect(mSession, readerState.szReader, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0);
+                connect(mSession, readerState.szReader, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T1);
                 _log("Connected!");
             } catch (PCSC::Error &e) {
                 _log("PCSC returned an error while connecting: %s (0x%lX)\n", pcsc_stringify_error(e.error), e.error);
@@ -676,8 +679,8 @@ int EstEIDToken::_connectAndBeginTransaction() {
         } else {
             _log("Already connected!");
         }
-        
-        
+
+
         if (!isInTransaction()) {
             try {
                 _log("Start transaction...");
@@ -690,9 +693,9 @@ int EstEIDToken::_connectAndBeginTransaction() {
             _log("Already in transaction!");
             return i; // we are all set up, return with retry count!
         }
-        
+
     }
-    
+
     _log("Retry count exceeded!");
     return maxRetries;
 }
@@ -702,7 +705,7 @@ int EstEIDToken::_connectAndBeginTransaction() {
  */
 void EstEIDToken::_endTransaction() {
     try {
-        if (isInTransaction()) 
+        if (isInTransaction())
             end();
     } catch (PCSC::Error &e) {
         if (e.error == SCARD_W_RESET_CARD)
